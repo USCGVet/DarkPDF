@@ -1,0 +1,72 @@
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a newer run supersede an in-flight one, but never cancel a live deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Windows runner: build.ps1 uses Windows-style paths.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # enablement:true turns Pages on via the API, so no manual trip to
+      # Settings -> Pages is needed on a fresh repo.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Build single-file reader
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $f = "dist/DarkPDF.html"
+          if (-not (Test-Path $f)) { throw "build produced no $f" }
+          $len = (Get-Item $f).Length
+          if ($len -lt 1MB) { throw "$f is only $len bytes - PDF.js probably was not inlined" }
+          $html = [IO.File]::ReadAllText($f)
+          foreach ($needle in '__PDFJS_WORKER_B64__', '<style>', 'DarkPDF') {
+            if ($html -notmatch [regex]::Escape($needle)) { throw "built file is missing '$needle'" }
+          }
+          if ($html -match 'src="libs/') { throw "built file still references external libs/" }
+          Write-Host ("ok - dist/DarkPDF.html is {0:N0} bytes" -f $len)
+
+      - name: Assemble site
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force _site, _site/libs, _site/dist, _site/test | Out-Null
+          Copy-Item index.html, app.css, app.js, README.md, LICENSE _site/
+          Copy-Item libs/* _site/libs/
+          Copy-Item dist/DarkPDF.html _site/dist/
+          Copy-Item test/sample.pdf _site/test/
+          # Pages would otherwise run the tree through Jekyll.
+          New-Item -ItemType File _site/.nojekyll | Out-Null
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

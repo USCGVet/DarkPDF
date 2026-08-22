@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DarkPDF</title>
+<!--__INLINE_CSS__--><link rel="stylesheet" href="app.css"><!--__/INLINE_CSS__-->
+</head>
+<body>
+<div id="app">
+  <header id="toolbar">
+    <div class="tb-group">
+      <button id="btnSidebar" class="tb-btn icon" title="Toggle thumbnails (T)">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
+      </button>
+      <button id="btnOpen" class="tb-btn" title="Open a PDF (Ctrl+O)">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+        <span>Open</span>
+      </button>
+      <span id="fileName" title=""></span>
+    </div>
+
+    <div class="tb-group" id="navGroup">
+      <input id="pageInput" type="text" inputmode="numeric" value="1" aria-label="Page number">
+      <span id="pageCount" class="dim">/ —</span>
+    </div>
+
+    <div class="tb-group" id="zoomGroup">
+      <button id="btnZoomOut" class="tb-btn icon" title="Zoom out (Ctrl+-)"><svg viewBox="0 0 24 24"><line x1="6" y1="12" x2="18" y2="12"/></svg></button>
+      <span id="zoomLevel">100%</span>
+      <button id="btnZoomIn" class="tb-btn icon" title="Zoom in (Ctrl+=)"><svg viewBox="0 0 24 24"><line x1="6" y1="12" x2="18" y2="12"/><line x1="12" y1="6" x2="12" y2="18"/></svg></button>
+      <button id="btnFitWidth" class="tb-btn icon" title="Fit width (W)"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M8 12h8M8 12l2-2M8 12l2 2M16 12l-2-2M16 12l-2 2"/></svg></button>
+      <button id="btnFitPage" class="tb-btn icon" title="Fit page (P)"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="1.5"/><path d="M12 8v8M12 8l-2 2M12 8l2 2M12 16l-2-2M12 16l2-2"/></svg></button>
+      <button id="btnRotate" class="tb-btn icon" title="Rotate pages (R)"><svg viewBox="0 0 24 24"><path d="M20 8a8 8 0 1 0 2 6"/><path d="M20 3v5h-5"/></svg></button>
+    </div>
+
+    <div class="tb-group" id="searchGroup">
+      <div id="searchBox">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><line x1="15" y1="15" x2="20" y2="20"/></svg>
+        <input id="searchInput" type="text" placeholder="Search  (Ctrl+F)" aria-label="Search text">
+        <span id="searchCount"></span>
+      </div>
+      <button id="btnSearchPrev" class="tb-btn icon" title="Previous match (Shift+Enter)"><svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg></button>
+      <button id="btnSearchNext" class="tb-btn icon" title="Next match (Enter)"><svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg></button>
+    </div>
+
+    <div class="tb-group" id="themeGroup">
+      <select id="themeSelect" title="Page theme">
+        <option value="warm">Warm dark</option>
+        <option value="gray">Soft gray</option>
+        <option value="night">Midnight</option>
+        <option value="paper">Original</option>
+      </select>
+      <input id="brightSlider" type="range" min="70" max="115" value="100" title="Page brightness">
+      <label id="imgToggleWrap" title="Keep photos in their original colors">
+        <input id="imgToggle" type="checkbox" checked>
+        <span class="switch"></span>
+        <span class="lbl">Photos</span>
+      </label>
+    </div>
+  </header>
+
+  <div id="progressBar"><div id="progressFill"></div></div>
+
+  <div id="main">
+    <aside id="sidebar"><div id="thumbs"></div></aside>
+    <div id="viewerWrap">
+      <div id="welcome">
+        <div class="w-card">
+          <div class="w-logo">
+            <svg viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          </div>
+          <h1>DarkPDF</h1>
+          <p class="w-tag">A PDF reader that's easy on the eyes.</p>
+          <button id="btnWelcomeOpen" class="w-open">Open a PDF</button>
+          <p class="w-drop">…or drop a file anywhere on this window</p>
+          <div class="w-science">
+            Pages render as soft warm-dark — not pure black — with gentle off-white text.
+            High-contrast white-on-black causes <em>halation</em> (glowing, smeared text) for
+            people with astigmatism, which most glasses wearers have. Muted contrast on a
+            dark-gray ground avoids it.
+          </div>
+          <div class="w-keys">
+            <span><kbd>Ctrl</kbd>+<kbd>O</kbd> open</span>
+            <span><kbd>Ctrl</kbd>+<kbd>F</kbd> search</span>
+            <span><kbd>Ctrl</kbd>+wheel zoom</span>
+            <span><kbd>←</kbd><kbd>→</kbd> pages</span>
+            <span><kbd>W</kbd>/<kbd>P</kbd> fit</span>
+            <span><kbd>T</kbd> thumbnails</span>
+          </div>
+        </div>
+      </div>
+      <div id="viewer"></div>
+    </div>
+  </div>
+
+  <div id="dropOverlay"><div>Drop PDF to open</div></div>
+  <div id="toast"></div>
+</div>
+<input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+<!--__PDFJS__--><script src="libs/pdf.min.js"></script><!--__/PDFJS__-->
+<!--__INLINE_JS__--><script src="app.js"></script><!--__/INLINE_JS__-->
+</body>
+</html>

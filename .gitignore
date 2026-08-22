@@ -1,0 +1,18 @@
+# OS / editor cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Local Claude Code settings (launch.json is shared intentionally)
+.claude/settings.local.json
+
+# Scratch work
+*.log
+tmp/
+scratch/
+
+# Note: dist/DarkPDF.html IS committed on purpose — it is the shipped
+# double-click deliverable. Regenerate it with build.ps1 after source edits.
