@@ -1,5 +1,8 @@
 # DarkPDF
 
+[![Build and deploy](https://github.com/USCGVet/DarkPDF/actions/workflows/pages.yml/badge.svg)](https://github.com/USCGVet/DarkPDF/actions/workflows/pages.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
+
 A dark-mode PDF reader that's easy on the eyes. Pages render as soft warm-dark —
 not pure black — with gentle off-white text.
 
