@@ -22,12 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # enablement:true turns Pages on via the API, so no manual trip to
-      # Settings -> Pages is needed on a fresh repo.
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
+      # No configure-pages step: it is only needed for site generators that
+      # consume its base_path output, and its enablement:true mode cannot
+      # create the Pages site on a fresh repo. Enable Pages once under
+      # Settings -> Pages -> Source: GitHub Actions.
       - name: Build single-file reader
         shell: pwsh
         run: ./build.ps1
