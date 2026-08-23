@@ -35,10 +35,14 @@ Then drag any PDF onto the window, or press `Ctrl+O`.
 ## Features
 
 - **Scripture on hover.** Scripture references in the text get a dotted
-  underline; hover one to read the passage in the King James Version, click to
-  pin it open so you can select and copy. The whole KJV ships inside the app —
-  no lookups, no network, nothing about your reading leaves the machine. Toggle
-  with the **Verses** switch or `V`. See
+  underline; hover one to read the passage in the King James Version. A short
+  passage dismisses itself when you look away. A passage long enough to need a
+  scrollbar stays put and grows a close button instead — otherwise reaching the
+  scrollbar would mean moving off the reference and dismissing the thing you
+  were trying to scroll. Clicking makes a short one stay too, and `Esc` closes
+  either. Text is selectable, so passages can be copied out. The whole KJV ships
+  inside the app — no lookups, no network, nothing about your reading leaves the
+  machine. Toggle with the **Verses** switch or `V`. See
   [Scripture references](#scripture-references) for what it recognises.
 - **Themes:** Warm dark (default), Soft gray, Midnight (near-black), Original —
   plus a page-brightness slider. Settings persist.
@@ -63,7 +67,7 @@ Then drag any PDF onto the window, or press `Ctrl+O`.
 | `←` `→`, `Home` / `End` | Previous/next page, first/last page |
 | `R` / `T` | Rotate pages / toggle thumbnails |
 | `V` | Toggle scripture references |
-| `Esc` | Close a pinned passage |
+| `Esc` | Close an open passage |
 
 ## Scripture references
 

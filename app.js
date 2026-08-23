@@ -1092,7 +1092,7 @@ const pop = {
   el: $("versePop"),
   refEl: null, bodyEl: null, noteEl: null,
   anchor: null,          // the <a> currently described
-  pinned: false,
+  persistent: false,     // stays until closed, rather than on mouse-out
   showTimer: 0, hideTimer: 0,
 };
 
@@ -1167,18 +1167,36 @@ function renderPop(entry) {
   return true;
 }
 
-async function showPop(anchor) {
+/* A passage too long to fit cannot behave like a hover tooltip: reaching its
+   scrollbar means moving the mouse off the reference, which would dismiss the
+   thing you are trying to scroll. So an overflowing passage stays put until
+   it is closed, and shows a close button to say as much. Short passages keep
+   the lighter hover-and-forget behaviour. */
+function setPersistent(on) {
+  pop.persistent = on;
+  pop.el.classList.toggle("persistent", on);
+}
+
+function bodyScrolls() {
+  return pop.bodyEl.scrollHeight > pop.bodyEl.clientHeight + 1;
+}
+
+async function showPop(anchor, opts) {
   const entry = refForAnchor(anchor);
   if (!entry) return;
+  const forcePersist = !!(opts && opts.persist);
 
   if (pop.anchor && pop.anchor !== anchor) pop.anchor.classList.remove("open");
   pop.anchor = anchor;
   anchor.classList.add("open");
 
+  setPersistent(false);        // re-derived below for this passage
   pop.el.hidden = false;
   const complete = renderPop(entry);
-  placePop(anchor);
+  pop.bodyEl.scrollTop = 0;
+  placePop(anchor);            // also forces the layout bodyScrolls() reads
   pop.el.classList.add("on");
+  setPersistent(forcePersist || bodyScrolls());
 
   if (!complete) {
     // Text still arriving — fill in once it lands, if this anchor is still up.
@@ -1189,14 +1207,15 @@ async function showPop(anchor) {
     if (pop.anchor !== anchor) return;
     renderPop(entry);
     placePop(anchor);
+    setPersistent(forcePersist || bodyScrolls());
   }
 }
 
 function hidePop(force) {
-  if (pop.pinned && !force) return;
+  if (pop.persistent && !force) return;
   clearTimeout(pop.showTimer);
-  pop.pinned = false;
-  pop.el.classList.remove("on", "pinned");
+  setPersistent(false);
+  pop.el.classList.remove("on");
   if (pop.anchor) pop.anchor.classList.remove("open");
   pop.anchor = null;
   // let the fade finish before pulling it out of the layout
@@ -1219,7 +1238,7 @@ function wireRefs() {
   });
 
   els.viewer.addEventListener("mouseout", (e) => {
-    if (pop.pinned) return;
+    if (pop.persistent) return;
     const a = e.target.closest && e.target.closest("a.kjv-ref");
     if (!a) return;
     clearTimeout(pop.showTimer);
@@ -1229,35 +1248,41 @@ function wireRefs() {
     pop.hideTimer = setTimeout(() => hidePop(), 180);
   });
 
-  // Clicking a reference pins the popover so the passage can be read and copied.
+  // Clicking makes a short passage stay too — same effect, deliberate instead
+  // of incidental. Clicking the same reference again closes it.
   els.viewer.addEventListener("click", (e) => {
     if (!state.refs.on) return;
     const a = e.target.closest && e.target.closest("a.kjv-ref");
     if (!a) return;
-    // Finishing a text selection over a reference shouldn't pin it.
+    // Finishing a text selection over a reference shouldn't open anything.
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     e.preventDefault();
+    clearTimeout(pop.showTimer);
     clearTimeout(pop.hideTimer);
-    if (pop.pinned && pop.anchor === a) { hidePop(true); return; }
-    pop.pinned = false;
-    showPop(a);
-    pop.pinned = true;
-    pop.el.classList.add("pinned");
+    if (pop.persistent && pop.anchor === a) { hidePop(true); return; }
+    showPop(a, { persist: true });
+  });
+
+  $("versePop").querySelector(".vp-close").addEventListener("click", (e) => {
+    e.preventDefault();
+    hidePop(true);
   });
 
   pop.el.addEventListener("mouseenter", () => clearTimeout(pop.hideTimer));
   pop.el.addEventListener("mouseleave", () => {
-    if (!pop.pinned) pop.hideTimer = setTimeout(() => hidePop(), 150);
+    if (!pop.persistent) pop.hideTimer = setTimeout(() => hidePop(), 150);
   });
 
-  // A pinned popover would otherwise float away from its reference.
+  // Scrolling the page moves the reference out from under the popover. The
+  // popover lives outside #viewerWrap, so scrolling its own body doesn't
+  // reach this handler.
   els.viewerWrap.addEventListener("scroll", () => {
     if (pop.anchor) hidePop(true);
   }, { passive: true });
 
   document.addEventListener("mousedown", (e) => {
-    if (pop.pinned && !pop.el.contains(e.target) &&
+    if (pop.persistent && !pop.el.contains(e.target) &&
         !(e.target.closest && e.target.closest("a.kjv-ref"))) hidePop(true);
   });
 }
@@ -1393,7 +1418,7 @@ function wireUI() {
   // keyboard
   window.addEventListener("keydown", (e) => {
     const inField = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
-    if (e.key === "Escape" && pop.pinned) { hidePop(true); return; }
+    if (e.key === "Escape" && pop.anchor) { hidePop(true); return; }
     if (e.ctrlKey && !e.altKey) {
       const k = e.key.toLowerCase();
       if (k === "o") { e.preventDefault(); els.fileInput.click(); return; }
