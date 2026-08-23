@@ -107,6 +107,59 @@ chk("Ezekiel refers to Eden as the garden of God (Ezek. 28:13; 31:8–9). "
   + "Ezekiel calls it the holy mountain of God (v. 28:14).",
     ["Ezekiel 28:13", "Ezekiel 31:8–9", "Ezekiel 28:14*"]);
 
+console.log("\n--- single-chapter books cited by verse alone ---");
+/* Supernatural p29 writes "see also Jude 5–6". Jude has one chapter, so the
+   bare number is a verse — none of these matched at all before. */
+chk("(2 Pet. 2:4–6 GNT; see also Jude 5–6)", ["2 Peter 2:4–6", "Jude 5–6"]);
+chk("Jude 6", ["Jude 6"]);
+chk("Jude 6–7", ["Jude 6–7"]);
+chk("Jude 8, 10", ["Jude 8, 10"]);
+chk("Philemon 10", ["Philemon 10"]);
+chk("Phlm. 10", ["Philemon 10"]);
+chk("Obadiah 15", ["Obadiah 15"]);
+chk("2 John 5", ["2 John 5"]);
+chk("3 John 4", ["3 John 4"]);
+/* A colon after a complete range is punctuation introducing a quotation
+   (Reversing Hermon p16), not a chapter — the range must survive. */
+chk("Jude 5–7:", ["Jude 5–7"]);
+/* The chapter stays in the label when the source spelled it out. */
+chk("Jude 1:6", ["Jude 1:6"]);
+/* 1 John has five chapters, so this stays a bare chapter — anchor only. */
+chk("1 John 5", []);
+/* A footnote marker fused to the book name is not a verse. */
+chk("discussed in Jude.13", []);
+
+/* "Jude" is never abbreviated, so that period ends a sentence and the number
+   after it is a footnote marker (Unseen Realm p316). An abbreviation keeps its
+   period legitimately, so "Phlm. 10" above must still resolve. */
+chk("the epistles of 2 Peter and Jude. 1 We discovered that", []);
+chk("Obad. 15", ["Obadiah 15"]);
+/* A colon introducing a quotation must still leave a usable chapter anchor —
+   without this, "v. 15" borrowed a stale Jude citation (Unseen Realm p349). */
+chk("Revelation 19: “He will shepherd them with an iron rod” (v. 15)",
+    ["Revelation 19:15*"]);
+
+console.log("\n--- dash variants ---");
+chk("Numbers 13:32−33", ["Numbers 13:32–33"]);   // U+2212 minus sign
+chk("Numbers 13:32－33", ["Numbers 13:32–33"]);   // U+FF0D fullwidth
+/* Whitespace inside a range is collapsed in the label rather than carried
+   into it — this caught DASH_RUN being built from a template literal, where
+   \s degrades to a literal "s". */
+chk("Isa. 14:9– 11", ["Isaiah 14:9–11"]);
+chk("Genesis 6:1–\n4", ["Genesis 6:1–4"]);
+
+console.log("\n--- references beginning a line ---");
+/* PDF.js emits one item per line with no separator, so app.js inserts a
+   newline wherever an item carries hasEOL. Without it these two fuse to
+   "InNumbers" and "like1 Samuel", and the word-boundary guard correctly
+   refuses them — which is exactly why Supernatural p30/p31 showed nothing. */
+chk("giants went by various names. In\nNumbers 13:32–33 they are called",
+    ["Numbers 13:32–33"]);
+chk("for certain from passages like\n1 Samuel 23:1–14, which tells us",
+    ["1 Samuel 23:1–14"]);
+chk("various names. InNumbers 13:32–33 they are called", []);   // the old, fused form
+chk("from passages like1 Samuel 23:1–14, which", []);
+
 console.log("\n--- carry across pages ---");
 const c = { book: "Judges", chapter: 6, page: 40, label: "Judges 6" };
 chk("Then in verse 14 the angel", ["Judges 6:14*"], { carry: c, page: 41 });

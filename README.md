@@ -84,8 +84,14 @@ variants), with `1`/`I`/`i` number prefixes:
 | List | `Rom. 8:15, 23` |
 | Cross-chapter | `Gen 1:1–2:3` |
 | Numbered book | `1 Sam 23:1–14`, `II Cor 5:17`, `1Cor 13:4` |
+| Single-chapter book | `Jude 6`, `Jude 5–7`, `Philemon 10`, `Obadiah 15`, `2 John 5` |
 | Book-less continuation | `Ezek. 28:13; 31:8–9` |
 | Bare continuation | `v. 12`, `vv. 6–8`, `verse 28`, `verses 19–21` |
+
+**Single-chapter books** — Obadiah, Philemon, Jude, 2 John, 3 John — are cited
+by verse alone, because naming the one chapter would be redundant. So `Jude 6`
+means verse 6, not chapter 6. `Jude 1:6` is understood too, and the popover
+label mirrors whichever form the page used.
 
 **Bare continuations** are the interesting case. Authors name a passage and then
 discuss it by verse alone for pages afterwards, so a reference is resolved

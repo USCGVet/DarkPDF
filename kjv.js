@@ -112,7 +112,11 @@ window.KJV = (function () {
   /* ---------- reference patterns ---------- */
 
   const N = String.raw`\d{1,3}`;
-  const DASH = String.raw`[-‐‑‒–—―]`;
+  /* Every dash a typesetter might reach for, including U+2212 MINUS SIGN,
+     which some PDF fonts emit for a range and which would otherwise
+     silently truncate "13:32−33" to "13:32". */
+  const DASH_CHARS = "-‐‑‒–—―−－";
+  const DASH = `[${DASH_CHARS}]`;
   /* one segment: 16 | 12-15 | 1-2:3 (cross-chapter) */
   const SEG = `${N}(?:\\s*${DASH}\\s*(?:${N}\\s*:\\s*)?${N})?`;
   /* full spec: segments joined by commas — "16, 17" or "12-15, 20" */
@@ -135,13 +139,53 @@ window.KJV = (function () {
   const FULL_RE = new RegExp(
     HEAD + String.raw`\s*(${N})\s*(?::|\.(?=\d))\s*(${SPEC})`, "g");
 
+  /* A single-chapter book cited by verse alone — "Jude 6", "Jude 5-7",
+     "Philemon 10", "Obadiah 15", "2 John 5". Naming the chapter would be
+     redundant, so nobody does, which means the bare number after these five
+     books is a verse and not a chapter. Only applied where the book really
+     has one chapter, so "1 John 5" stays a chapter reference.
+
+     Whitespace before the number is required: it keeps a footnote marker
+     glued to the book name ("discussed in Jude.13") from reading as a verse.
+
+     The lookahead rejects a chapter:verse form, so "Jude 2:1" does not get
+     read as verse 2 (it is simply invalid — Jude has one chapter). It tests
+     only the first number, because a colon after a complete range is normal
+     punctuation introducing a quotation: "Jude 5-7: 5 Now I want to remind
+     you..." must still resolve to verses 5-7.
+
+     The period is captured rather than discarded so the scan can tell an
+     abbreviation from the end of a sentence — see FULL_NAME below. */
+  const SINGLE_RE = new RegExp(
+    String.raw`(?<![A-Za-z])(?:([1-3]|III|II|I)\s*\.?\s*)?` +
+    String.raw`([A-Z][A-Za-z]{0,13})(\.?)(?:\[[A-Za-z]*\])?` +
+    String.raw`\s+(?!${N}\s*:\s*\d)(${SPEC})`, "g");
+
+  /* "Jude" is never abbreviated, so a period after it ends a sentence — and
+     the number that follows is a footnote marker, not a verse:
+
+       ...the epistles of 2 Peter and Jude. 1 We discovered that...
+
+     An abbreviation keeps its period legitimately ("Phlm. 10"), so the test
+     is whether the matched word is the book's full name. */
+  const FULL_NAME = new Map();
+  for (const [name] of BOOKS) {
+    FULL_NAME.set(name, name.replace(/^[1-3]\s*/, "").toLowerCase());
+  }
+
   /* A bare chapter — "Genesis 3", "Hebrews 1". These never become
      hoverable (a whole chapter is not a tooltip), but they DO anchor the
      carry: authors routinely name a chapter and then discuss it by verse
      alone ("...hints in Genesis 3 ... In verse 22, after Adam and Eve").
-     Without this the bare verse resolves against a stale citation. */
+     Without this the bare verse resolves against a stale citation.
+
+     The trailing lookahead only rejects a colon that a verse follows. A
+     colon introducing a quotation still leaves a usable chapter anchor:
+     "Revelation 19: “He will shepherd them with an iron rod” (v. 15)"
+     has to anchor on Revelation 19, or "v. 15" borrows whatever was cited
+     before it. */
   const CHAPTER_RE = new RegExp(
-    HEAD + String.raw`\s+(${N})(?!\d)(?!\s*(?::|\.\d))`, "g");
+    HEAD + String.raw`\s+(${N})(?!\d)(?!\s*(?::\s*\d|\.\d))`, "g");
 
   /* A chapter:verse with no book, continuing a citation group after a
      semicolon or comma — "(Ezek. 28:13; 31:8-9)". Standard SBL style, so
@@ -185,8 +229,12 @@ window.KJV = (function () {
     return out;
   }
 
+  /* String.raw, not a plain template: in a template literal `\s` is just "s",
+     which quietly turned this into a search for the letter s. */
+  const DASH_RUN = new RegExp(String.raw`\s*` + DASH + String.raw`\s*`, "g");
+
   function specLabel(spec) {
-    return spec.replace(/\s*[-‐‑‒–—―]\s*/g, "–")
+    return spec.replace(DASH_RUN, "–")
                .replace(/\s*,\s*/g, ", ")
                .replace(/\s*:\s*/g, ":");
   }
@@ -199,14 +247,20 @@ window.KJV = (function () {
     return one ? "Psalm" : "Psalms";
   }
 
-  function makeRef(book, chapter, spec) {
+  /* `implicitChapter` means the citation named no chapter because the book
+     has only one. The label then mirrors the source — "Jude 6", not
+     "Jude 1:6" — while the resolved reference still points at chapter 1. */
+  function makeRef(book, chapter, spec, implicitChapter) {
     const max = CHAPTERS.get(book);
     if (!max || chapter < 1 || chapter > max) return null;
     const segs = parseSpec(chapter, spec).filter(s => s.c2 <= max);
     if (!segs.length) return null;
+    const name = displayBook(book, segs);
     return {
       book, chapter, segs,
-      label: `${displayBook(book, segs)} ${chapter}:${specLabel(spec)}`,
+      label: implicitChapter
+        ? `${name} ${specLabel(spec)}`
+        : `${name} ${chapter}:${specLabel(spec)}`,
     };
   }
 
@@ -276,6 +330,22 @@ window.KJV = (function () {
       const end = m.index + m[0].length;
       if (refs.some(r => m.index < r.end && end > r.start)) continue;
       anchors.push({ start: m.index, book, chapter });
+    }
+
+    /* Single-chapter books cited by verse alone. Runs before the bare-chapter
+       pass so "Jude 1" reads as verse 1 rather than chapter 1. */
+    SINGLE_RE.lastIndex = 0;
+    while ((m = SINGLE_RE.exec(text)) !== null) {
+      const book = resolveBook(m[1], m[2]);
+      if (!book || CHAPTERS.get(book) !== 1) continue;
+      // full name + period = sentence break, so the number is a footnote
+      if (m[3] && m[2].toLowerCase() === FULL_NAME.get(book)) continue;
+      const start = m.index, end = m.index + m[0].length;
+      if (refs.some(r => start < r.end && end > r.start)) continue;
+      const ref = makeRef(book, 1, m[4], true);
+      if (!ref) continue;
+      refs.push({ start, end, ref, carried: false });
+      anchors.push({ start, book, chapter: 1 });
     }
 
     anchors.sort((a, b) => a.start - b.start);
@@ -397,6 +467,22 @@ window.KJV = (function () {
 
   function isLoaded() { return store !== null; }
 
+  /* Whether a reference lands on real text. Chapter counts are checked while
+     parsing, but verse counts live in the store, so an out-of-range verse
+     ("Jude 26" — Jude has 25) only becomes detectable once it is loaded.
+     Callers use this to avoid underlining a citation whose popover would be
+     empty. Optimistic before the text arrives, so nothing flickers. */
+  function resolves(ref) {
+    if (!store) return true;
+    const chapters = store.get(ref.book);
+    if (!chapters) return false;
+    for (const s of ref.segs) {
+      const chap = chapters[s.c1 - 1];
+      if (chap && s.v1 >= 1 && s.v1 <= chap.length) return true;
+    }
+    return false;
+  }
+
   /* ---------- passage resolution ---------- */
 
   /* { label, verses:[{c,v,text}], truncated, missing } — needs load(). */
@@ -425,5 +511,5 @@ window.KJV = (function () {
     return { label: ref.label, verses, truncated, missing: verses.length === 0 };
   }
 
-  return { findRefs, passage, load, isLoaded, CARRY_MAX_PAGES, MAX_VERSES };
+  return { findRefs, passage, load, isLoaded, resolves, CARRY_MAX_PAGES, MAX_VERSES };
 })();

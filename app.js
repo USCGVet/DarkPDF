@@ -263,7 +263,7 @@ async function openDocument(data, name, fileKey) {
   // Reference indexing reads every page's text, so let the visible pages
   // render first rather than competing with them.
   if (state.refs.on) {
-    const start = () => { if (seq === state.docSeq) buildRefIndex(); };
+    const start = () => { if (seq === state.docSeq) buildRefIndex().catch(() => {}); };
     if (window.requestIdleCallback) requestIdleCallback(start, { timeout: 1200 });
     else setTimeout(start, 400);
   }
@@ -863,16 +863,22 @@ async function runSearch(query) {
   state.search.indexing = false;
   if (!ok || state.search.query !== q) return;
 
-  const ql = q.toLowerCase();
+  /* Any whitespace in the query matches any whitespace in the page, so a
+     phrase that straddles a line break still hits. A plain substring search
+     could not do that, since the page text carries a newline at each line
+     end that the reader never typed. */
+  const re = new RegExp(
+    q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"), "gi");
   const matches = [];
   for (let i = 1; i <= state.numPages; i++) {
     const p = state.pages[i];
-    if (!p.pageTextLower) continue;
-    let idx = p.pageTextLower.indexOf(ql);
-    while (idx !== -1) {
-      matches.push({ page: i, start: idx, end: idx + ql.length });
+    if (!p.pageText) continue;
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(p.pageText)) !== null) {
+      matches.push({ page: i, start: m.index, end: m.index + m[0].length });
+      if (m[0].length === 0) re.lastIndex++;      // never spin on an empty match
       if (matches.length > 5000) break;
-      idx = p.pageTextLower.indexOf(ql, idx + 1);
     }
     if (matches.length > 5000) break;
   }
@@ -930,6 +936,15 @@ function goToMatch(k) {
 
 /* Offsets of each text item within the page's concatenated text. Built by
    ensurePageText(), but a page can render before indexing reaches it. */
+/* PDF.js hands back one item per run of text on a line, with no separator
+   between them, so naively joining fuses the last word of a line to the first
+   word of the next: "...various names. In" + "Numbers 13:32-33..." becomes
+   "InNumbers", and a reference that begins a line stops looking like one.
+   Items that end a line carry hasEOL, so a newline goes in there.
+
+   The inserted newline belongs to no item. splitRange() derives each item's
+   extent from its own string length, so the separator simply falls in the gap
+   between items and never gets decorated. */
 function ensureItemStarts(p) {
   if (p.itemStarts || !p.textItems) return !!p.itemStarts;
   let text = "";
@@ -937,9 +952,9 @@ function ensureItemStarts(p) {
   for (let k = 0; k < p.textItems.length; k++) {
     starts[k] = text.length;
     text += p.textItems[k].str;
+    if (p.textItems[k].hasEOL) text += "\n";
   }
   p.pageText = text;
-  p.pageTextLower = text.toLowerCase();
   p.itemStarts = starts;
   return true;
 }
@@ -1024,6 +1039,7 @@ function decoratePage(p) {
   if (state.refs.on && p.refs) {
     for (let ri = 0; ri < p.refs.length; ri++) {
       const r = p.refs[ri];
+      if (!KJV.resolves(r.ref)) continue;   // would open an empty popover
       splitRange(p, r.start, r.end,
         { kind: "ref", id: p.num + ":" + ri, carried: r.carried }, perItem);
     }
@@ -1064,7 +1080,9 @@ async function buildRefIndex() {
   state.refs.indexing = true;
 
   // Fetch the text in parallel with this pass; the first hover needs it.
-  KJV.load().catch(() => {});
+  // Re-decorate when it lands: resolves() can only reject an out-of-range
+  // verse once the text is actually here.
+  KJV.load().then(() => decorateAll()).catch(() => {});
 
   let carry = null;
   let total = 0;
@@ -1072,7 +1090,13 @@ async function buildRefIndex() {
     for (let i = 1; i <= state.numPages; i++) {
       const p = state.pages[i];
       if (!p) continue;
-      if (!await ensurePageText(p, seq)) return;
+      let ok;
+      try {
+        ok = await ensurePageText(p, seq);
+      } catch (e) {
+        continue;      // a page that won't yield text shouldn't end the pass
+      }
+      if (!ok) return; // document changed underneath us
       const { refs, carryOut } = KJV.findRefs(p.pageText, carry, i);
       carry = carryOut;
       p.refs = refs;
