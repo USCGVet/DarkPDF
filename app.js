@@ -49,7 +49,7 @@ const els = {
   zoomLevel: $("zoomLevel"),
   searchInput: $("searchInput"), searchCount: $("searchCount"),
   themeSelect: $("themeSelect"), brightSlider: $("brightSlider"),
-  imgToggle: $("imgToggle"),
+  imgToggle: $("imgToggle"), refToggle: $("refToggle"),
   progressBar: $("progressBar"), progressFill: $("progressFill"),
   dropOverlay: $("dropOverlay"), toast: $("toast"),
 };
@@ -68,6 +68,7 @@ const state = {
   brightness: 1,
   preserveImages: true,
   search: { query: "", matches: [], index: -1, indexing: false },
+  refs: { on: true, indexing: false, indexed: false, count: 0 },
   docSeq: 0,            // bumped per document; async guards
 };
 
@@ -79,12 +80,14 @@ function loadSettings() {
     if (THEMES.hasOwnProperty(s.theme)) state.theme = s.theme;
     if (s.brightness >= 0.7 && s.brightness <= 1.15) state.brightness = s.brightness;
     if (typeof s.preserveImages === "boolean") state.preserveImages = s.preserveImages;
+    if (typeof s.verseRefs === "boolean") state.refs.on = s.verseRefs;
     if (s.sidebar) els.sidebar.classList.add("open");
     if (s.zoomMode === "fit-page") state.zoomMode = "fit-page";
   } catch (e) { /* fresh start */ }
   els.themeSelect.value = state.theme;
   els.brightSlider.value = Math.round(state.brightness * 100);
   els.imgToggle.checked = state.preserveImages;
+  els.refToggle.checked = state.refs.on;
 }
 
 function saveSettings() {
@@ -93,6 +96,7 @@ function saveSettings() {
       theme: state.theme,
       brightness: state.brightness,
       preserveImages: state.preserveImages,
+      verseRefs: state.refs.on,
       sidebar: els.sidebar.classList.contains("open"),
       zoomMode: state.zoomMode === "fit-page" ? "fit-page" : "fit-width",
     }));
@@ -183,6 +187,10 @@ async function openDocument(data, name, fileKey) {
   els.viewer.innerHTML = "";
   els.thumbs.innerHTML = "";
   clearSearch(true);
+  hidePop(true);
+  state.refs.indexed = false;
+  state.refs.indexing = false;
+  state.refs.count = 0;
 
   const loadingTask = pdfjsLib.getDocument({
     data,
@@ -251,6 +259,14 @@ async function openDocument(data, name, fileKey) {
     scrollToPage(back);
     toast(`Resumed at page ${back}`, 1800);
   }
+
+  // Reference indexing reads every page's text, so let the visible pages
+  // render first rather than competing with them.
+  if (state.refs.on) {
+    const start = () => { if (seq === state.docSeq) buildRefIndex(); };
+    if (window.requestIdleCallback) requestIdleCallback(start, { timeout: 1200 });
+    else setTimeout(start, 400);
+  }
 }
 
 function makePageEntry(num, w, h) {
@@ -264,6 +280,8 @@ function makePageEntry(num, w, h) {
     renderTask: null, textLayerTask: null,
     renderedScale: 0, renderedRotation: -1,
     textDivs: null, textItems: null, pageText: null,
+    refs: null,                // scripture references found in pageText
+    decorated: null,           // text-item indices decoratePage() rewrote
     imageRects: undefined,     // page-space quads, cached
   };
 }
@@ -322,6 +340,25 @@ function updateZoomLabel() {
   els.zoomLevel.textContent = Math.round(state.scale * 100) + "%";
   $("btnFitWidth").classList.toggle("active", state.zoomMode === "fit-width");
   $("btnFitPage").classList.toggle("active", state.zoomMode === "fit-page");
+  updatePopScale();
+}
+
+/* The verse popover tracks the page zoom, so a passage is set at the size
+   you're already reading the book at. Everything inside the popover is
+   sized in em, so setting this one value scales the whole thing.
+
+   Floored at the base size — below 100% zoom the popover would become less
+   readable than the chrome around it. The ceiling is generous (roughly 300%
+   zoom) so that zooming in to read really does make the passage bigger;
+   past it the popover stops growing rather than swallowing the window. */
+const POP_BASE_PX = 13.5;
+const POP_MAX_PX = 40;
+
+function updatePopScale() {
+  const px = Math.min(POP_MAX_PX, Math.max(POP_BASE_PX, POP_BASE_PX * state.scale));
+  document.documentElement.style.setProperty("--vp-font", px.toFixed(2) + "px");
+  // An open popover was measured at the old size.
+  if (pop.anchor) placePop(pop.anchor);
 }
 
 function buildPageShells() {
@@ -409,6 +446,7 @@ function releasePage(p, hard) {
   p.rendered = false;
   p.renderedScale = 0; p.renderedRotation = -1;
   p.textDivs = null;
+  p.decorated = null;
   if (p.wrapper) {
     p.wrapper.classList.remove("rendered");
     if (p.canvas) { p.canvas.width = 0; p.canvas.remove(); p.canvas = null; }
@@ -504,7 +542,7 @@ async function renderPage(p) {
     if (seq !== state.docSeq) return;
     p.textDivs = textDivs;
 
-    if (state.search.query) applyHighlights(p);
+    decoratePage(p);
 
     // image passthrough overlays
     p.overlayDiv.innerHTML = "";
@@ -778,31 +816,31 @@ function clearSearch(silent) {
   state.search.index = -1;
   els.searchCount.textContent = "";
   els.searchCount.classList.remove("none");
-  if (!silent) for (const p of state.pages) if (p && p.textDivs) removeHighlights(p);
+  if (!silent) decorateAll();
+}
+
+/* Pull a page's text content and build its offset table. Shared by search
+   indexing and reference indexing, both of which need every page's text;
+   whichever runs first pays for it. Returns false if the document changed
+   underneath us. */
+async function ensurePageText(p, seq) {
+  if (p.pageText !== null && p.pageText !== undefined) return true;
+  if (!p.textItems) {
+    if (!p.pdfPage) p.pdfPage = await state.pdf.getPage(p.num);
+    if (seq !== state.docSeq) return false;
+    const tc = await p.pdfPage.getTextContent();
+    if (seq !== state.docSeq) return false;
+    p.textItems = tc.items;
+    p.textContent = tc;
+  }
+  ensureItemStarts(p);
+  return true;
 }
 
 async function ensureAllPageText() {
   const seq = state.docSeq;
   for (let i = 1; i <= state.numPages; i++) {
-    const p = state.pages[i];
-    if (p.pageText !== null && p.pageText !== undefined) continue;
-    if (!p.textItems) {
-      if (!p.pdfPage) p.pdfPage = await state.pdf.getPage(i);
-      if (seq !== state.docSeq) return false;
-      const tc = await p.pdfPage.getTextContent();
-      if (seq !== state.docSeq) return false;
-      p.textItems = tc.items;
-      p.textContent = tc;
-    }
-    let text = "";
-    const starts = new Array(p.textItems.length);
-    for (let k = 0; k < p.textItems.length; k++) {
-      starts[k] = text.length;
-      text += p.textItems[k].str;
-    }
-    p.pageText = text;
-    p.pageTextLower = text.toLowerCase();
-    p.itemStarts = starts;
+    if (!await ensurePageText(state.pages[i], seq)) return false;
     if (i % 25 === 0) els.searchCount.textContent = `indexing ${Math.round(i / state.numPages * 100)}%`;
   }
   return true;
@@ -812,7 +850,7 @@ async function runSearch(query) {
   if (!state.pdf) return;
   const q = query.trim();
   const prevQuery = state.search.query;
-  for (const p of state.pages) if (p && p.textDivs) removeHighlights(p);
+  decorateAll();
   state.search.query = q;
   state.search.matches = [];
   state.search.index = -1;
@@ -864,13 +902,10 @@ function goToMatch(k) {
   const m = s.matches[s.index];
   const p = state.pages[m.page];
 
-  // refresh highlight styling on the two affected pages
-  for (const pg of state.pages) {
-    if (pg && pg.textDivs && pg.hasHighlights) applyHighlights(pg);
-  }
+  // the previous and current match may sit on different pages
+  decorateAll();
 
   if (p.textDivs) {
-    applyHighlights(p);
     const cur = p.textLayerDiv.querySelector("mark.cur");
     scrollToPage(m.page, cur || undefined);
   } else {
@@ -879,79 +914,361 @@ function goToMatch(k) {
   }
 }
 
-function removeHighlights(p) {
-  if (!p.hasHighlights || !p.textDivs) { p.hasHighlights = false; return; }
-  for (let k = 0; k < p.textDivs.length; k++) {
-    const div = p.textDivs[k];
-    if (div && div.querySelector && div.querySelector("mark")) {
-      div.textContent = p.textItems[k].str;
-    }
+/* ================= text-layer decoration =================
+   Search highlights and scripture-reference anchors both rewrite the same
+   PDF.js text-layer spans, so they cannot own that markup independently —
+   whichever ran second would erase the other. decoratePage() is the single
+   writer: it rebuilds each affected span from the original string with both
+   kinds of range applied, and remembers which spans it touched so the next
+   pass can reset exactly those.
+
+   A range of either kind may span several spans (PDF.js splits text at
+   layout boundaries, not word ones), and the two kinds may overlap — you
+   can search for text that is itself a reference. So the emitter cuts each
+   span at every range boundary and nests a <mark> inside an <a> where they
+   coincide. */
+
+/* Offsets of each text item within the page's concatenated text. Built by
+   ensurePageText(), but a page can render before indexing reaches it. */
+function ensureItemStarts(p) {
+  if (p.itemStarts || !p.textItems) return !!p.itemStarts;
+  let text = "";
+  const starts = new Array(p.textItems.length);
+  for (let k = 0; k < p.textItems.length; k++) {
+    starts[k] = text.length;
+    text += p.textItems[k].str;
   }
-  p.hasHighlights = false;
+  p.pageText = text;
+  p.pageTextLower = text.toLowerCase();
+  p.itemStarts = starts;
+  return true;
 }
 
-function applyHighlights(p) {
-  if (!p.textDivs || !p.itemStarts) {
-    // itemStarts may not exist if search indexed before render — build if possible
-    if (p.textItems && !p.itemStarts) {
-      let text = "";
-      const starts = new Array(p.textItems.length);
-      for (let k = 0; k < p.textItems.length; k++) { starts[k] = text.length; text += p.textItems[k].str; }
-      p.pageText = text; p.pageTextLower = text.toLowerCase(); p.itemStarts = starts;
-    } else return;
-  }
-  removeHighlights(p);
-  const s = state.search;
-  if (!s.query) return;
-  const pageMatches = [];
-  for (let mi = 0; mi < s.matches.length; mi++) {
-    if (s.matches[mi].page === p.num) pageMatches.push({ ...s.matches[mi], cur: mi === s.index });
-  }
-  if (!pageMatches.length) return;
-
-  // group match ranges per text item
-  const perItem = new Map();
+/* Split a page-text range across the text items it covers, appending
+   {ls, le} local offsets into `perItem`. */
+function splitRange(p, start, end, tag, perItem) {
   const starts = p.itemStarts;
-  for (const m of pageMatches) {
-    // find first item whose range intersects
-    let lo = 0, hi = starts.length - 1, first = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (starts[mid] <= m.start) { first = mid; lo = mid + 1; } else hi = mid - 1;
+  let lo = 0, hi = starts.length - 1, first = 0;
+  while (lo <= hi) {                       // last item starting at or before `start`
+    const mid = (lo + hi) >> 1;
+    if (starts[mid] <= start) { first = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  for (let k = first; k < starts.length; k++) {
+    const itemStart = starts[k];
+    const itemEnd = itemStart + p.textItems[k].str.length;
+    if (itemStart >= end) break;
+    if (itemEnd <= start) continue;
+    const ls = Math.max(0, start - itemStart);
+    const le = Math.min(p.textItems[k].str.length, end - itemStart);
+    if (le <= ls) continue;
+    if (!perItem.has(k)) perItem.set(k, []);
+    perItem.get(k).push({ ls, le, ...tag });
+  }
+}
+
+/* Rebuild one span with its ranges applied. */
+function paintItem(div, str, ranges) {
+  const cuts = new Set([0, str.length]);
+  for (const r of ranges) { cuts.add(r.ls); cuts.add(r.le); }
+  const points = [...cuts].sort((a, b) => a - b);
+
+  div.textContent = "";
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    if (a >= b) continue;
+    let node = document.createTextNode(str.slice(a, b));
+    const covering = ranges.filter(r => r.ls <= a && r.le >= b);
+    const hit = covering.find(r => r.kind === "mark");
+    const ref = covering.find(r => r.kind === "ref");
+    if (hit) {
+      const mark = document.createElement("mark");
+      if (hit.cur) mark.className = "cur";
+      mark.appendChild(node);
+      node = mark;
     }
-    for (let k = first; k < starts.length; k++) {
-      const itemStart = starts[k];
-      const itemEnd = itemStart + p.textItems[k].str.length;
-      if (itemStart >= m.end) break;
-      if (itemEnd <= m.start) continue;
-      const ls = Math.max(0, m.start - itemStart);
-      const le = Math.min(p.textItems[k].str.length, m.end - itemStart);
-      if (le > ls) {
-        if (!perItem.has(k)) perItem.set(k, []);
-        perItem.get(k).push([ls, le, m.cur]);
-      }
+    if (ref) {
+      const anchor = document.createElement("a");
+      anchor.className = "kjv-ref" + (ref.carried ? " carried" : "");
+      anchor.dataset.ref = ref.id;
+      anchor.appendChild(node);
+      node = anchor;
+    }
+    div.appendChild(node);
+  }
+}
+
+function decoratePage(p) {
+  if (!p || !p.textDivs || !p.textItems) return;
+
+  // reset only the spans a previous pass rewrote
+  if (p.decorated) {
+    for (const k of p.decorated) {
+      const div = p.textDivs[k];
+      if (div) div.textContent = p.textItems[k].str;
+    }
+    p.decorated = null;
+  }
+  if (!ensureItemStarts(p)) return;
+
+  const perItem = new Map();
+
+  const s = state.search;
+  if (s.query) {
+    for (let mi = 0; mi < s.matches.length; mi++) {
+      const m = s.matches[mi];
+      if (m.page !== p.num) continue;
+      splitRange(p, m.start, m.end, { kind: "mark", cur: mi === s.index }, perItem);
     }
   }
 
+  if (state.refs.on && p.refs) {
+    for (let ri = 0; ri < p.refs.length; ri++) {
+      const r = p.refs[ri];
+      splitRange(p, r.start, r.end,
+        { kind: "ref", id: p.num + ":" + ri, carried: r.carried }, perItem);
+    }
+  }
+
+  if (!perItem.size) return;
+
+  const touched = [];
   for (const [k, ranges] of perItem) {
     const div = p.textDivs[k];
     if (!div || div.tagName !== "SPAN") continue;
-    const str = p.textItems[k].str;
-    ranges.sort((a, b) => a[0] - b[0]);
-    div.textContent = "";
-    let pos = 0;
-    for (const [ls, le, cur] of ranges) {
-      if (ls < pos) continue; // overlapping ranges — skip
-      if (ls > pos) div.appendChild(document.createTextNode(str.slice(pos, ls)));
-      const mark = document.createElement("mark");
-      if (cur) mark.className = "cur";
-      mark.textContent = str.slice(ls, le);
-      div.appendChild(mark);
-      pos = le;
-    }
-    if (pos < str.length) div.appendChild(document.createTextNode(str.slice(pos)));
+    paintItem(div, p.textItems[k].str, ranges);
+    touched.push(k);
   }
-  p.hasHighlights = true;
+  p.decorated = touched.length ? touched : null;
+}
+
+/* Redecorate every page that currently has a text layer. */
+function decorateAll() {
+  for (const p of state.pages) if (p && p.textDivs) decoratePage(p);
+}
+
+/* ================= scripture references =================
+   Two halves: an index pass that finds references across the whole
+   document, and a popover that shows the KJV text on hover.
+
+   The index has to run in document order rather than per rendered page,
+   because a bare continuation ("In verse 22…") resolves against whichever
+   citation came before it — possibly on an earlier page. So a page cannot
+   be interpreted in isolation, and jumping straight to page 300 would give
+   the wrong antecedent. The pass runs in the background after open and
+   decorates each page as it goes; pages already on screen pick up their
+   anchors when the pass reaches them. */
+
+async function buildRefIndex() {
+  if (!state.pdf || state.refs.indexing) return;
+  const seq = state.docSeq;
+  state.refs.indexing = true;
+
+  // Fetch the text in parallel with this pass; the first hover needs it.
+  KJV.load().catch(() => {});
+
+  let carry = null;
+  let total = 0;
+  try {
+    for (let i = 1; i <= state.numPages; i++) {
+      const p = state.pages[i];
+      if (!p) continue;
+      if (!await ensurePageText(p, seq)) return;
+      const { refs, carryOut } = KJV.findRefs(p.pageText, carry, i);
+      carry = carryOut;
+      p.refs = refs;
+      total += refs.length;
+      if (refs.length && p.textDivs) decoratePage(p);
+    }
+    state.refs.indexed = true;
+    state.refs.count = total;
+  } finally {
+    if (seq === state.docSeq) state.refs.indexing = false;
+  }
+}
+
+/* ---------- popover ---------- */
+
+const pop = {
+  el: $("versePop"),
+  refEl: null, bodyEl: null, noteEl: null,
+  anchor: null,          // the <a> currently described
+  pinned: false,
+  showTimer: 0, hideTimer: 0,
+};
+
+function initPop() {
+  pop.refEl = pop.el.querySelector(".vp-ref");
+  pop.bodyEl = pop.el.querySelector(".vp-body");
+  pop.noteEl = pop.el.querySelector(".vp-note");
+}
+
+/* Resolve the {page, index} encoded in an anchor's data-ref. */
+function refForAnchor(a) {
+  const id = a && a.dataset && a.dataset.ref;
+  if (!id) return null;
+  const [pageStr, idxStr] = id.split(":");
+  const p = state.pages[+pageStr];
+  return p && p.refs ? p.refs[+idxStr] || null : null;
+}
+
+function placePop(anchor) {
+  const r = anchor.getBoundingClientRect();
+  const el = pop.el;
+  // Size is independent of position (max-content capped by a viewport-relative
+  // max-width), so it can be measured in place — no reset, no flash when this
+  // runs a second time after the text arrives.
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const margin = 10;
+
+  let left = r.left + r.width / 2 - w / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
+
+  // below if it fits, otherwise above
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - margin) {
+    const above = r.top - h - 8;
+    top = above >= margin ? above : Math.max(margin, window.innerHeight - h - margin);
+  }
+  el.style.left = Math.round(left) + "px";
+  el.style.top = Math.round(top) + "px";
+}
+
+function renderPop(entry) {
+  const data = KJV.passage(entry.ref);
+  pop.refEl.textContent = entry.ref.label;
+  pop.bodyEl.innerHTML = "";
+  pop.noteEl.textContent = "";
+
+  if (!data) {
+    pop.bodyEl.textContent = "Loading the King James text…";
+    return false;
+  }
+  if (data.missing || !data.verses.length) {
+    pop.bodyEl.textContent = "No text found for that reference.";
+    return true;
+  }
+
+  for (const v of data.verses) {
+    const line = document.createElement("p");
+    line.className = "vp-v";
+    const n = document.createElement("span");
+    n.className = "n";
+    // Show chapter:verse when a passage crosses chapters, else just the verse.
+    n.textContent = data.verses[0].c === v.c ? v.v : `${v.c}:${v.v}`;
+    line.appendChild(n);
+    line.appendChild(document.createTextNode(v.text));
+    pop.bodyEl.appendChild(line);
+  }
+
+  const notes = [];
+  if (entry.carried) notes.push(`continues ${entry.from}`);
+  if (data.truncated) notes.push(`first ${KJV.MAX_VERSES} verses`);
+  pop.noteEl.textContent = notes.join(" · ");
+  return true;
+}
+
+async function showPop(anchor) {
+  const entry = refForAnchor(anchor);
+  if (!entry) return;
+
+  if (pop.anchor && pop.anchor !== anchor) pop.anchor.classList.remove("open");
+  pop.anchor = anchor;
+  anchor.classList.add("open");
+
+  pop.el.hidden = false;
+  const complete = renderPop(entry);
+  placePop(anchor);
+  pop.el.classList.add("on");
+
+  if (!complete) {
+    // Text still arriving — fill in once it lands, if this anchor is still up.
+    try { await KJV.load(); } catch (e) {
+      if (pop.anchor === anchor) pop.bodyEl.textContent = "Couldn't load the KJV text.";
+      return;
+    }
+    if (pop.anchor !== anchor) return;
+    renderPop(entry);
+    placePop(anchor);
+  }
+}
+
+function hidePop(force) {
+  if (pop.pinned && !force) return;
+  clearTimeout(pop.showTimer);
+  pop.pinned = false;
+  pop.el.classList.remove("on", "pinned");
+  if (pop.anchor) pop.anchor.classList.remove("open");
+  pop.anchor = null;
+  // let the fade finish before pulling it out of the layout
+  clearTimeout(pop.hideTimer);
+  pop.hideTimer = setTimeout(() => {
+    if (!pop.el.classList.contains("on")) pop.el.hidden = true;
+  }, 150);
+}
+
+function wireRefs() {
+  initPop();
+
+  els.viewer.addEventListener("mouseover", (e) => {
+    if (!state.refs.on) return;
+    const a = e.target.closest && e.target.closest("a.kjv-ref");
+    if (!a || a === pop.anchor) return;
+    clearTimeout(pop.showTimer);
+    clearTimeout(pop.hideTimer);
+    pop.showTimer = setTimeout(() => showPop(a), 130);
+  });
+
+  els.viewer.addEventListener("mouseout", (e) => {
+    if (pop.pinned) return;
+    const a = e.target.closest && e.target.closest("a.kjv-ref");
+    if (!a) return;
+    clearTimeout(pop.showTimer);
+    // Moving into the popover itself must not dismiss it.
+    const to = e.relatedTarget;
+    if (to && pop.el.contains(to)) return;
+    pop.hideTimer = setTimeout(() => hidePop(), 180);
+  });
+
+  // Clicking a reference pins the popover so the passage can be read and copied.
+  els.viewer.addEventListener("click", (e) => {
+    if (!state.refs.on) return;
+    const a = e.target.closest && e.target.closest("a.kjv-ref");
+    if (!a) return;
+    // Finishing a text selection over a reference shouldn't pin it.
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    e.preventDefault();
+    clearTimeout(pop.hideTimer);
+    if (pop.pinned && pop.anchor === a) { hidePop(true); return; }
+    pop.pinned = false;
+    showPop(a);
+    pop.pinned = true;
+    pop.el.classList.add("pinned");
+  });
+
+  pop.el.addEventListener("mouseenter", () => clearTimeout(pop.hideTimer));
+  pop.el.addEventListener("mouseleave", () => {
+    if (!pop.pinned) pop.hideTimer = setTimeout(() => hidePop(), 150);
+  });
+
+  // A pinned popover would otherwise float away from its reference.
+  els.viewerWrap.addEventListener("scroll", () => {
+    if (pop.anchor) hidePop(true);
+  }, { passive: true });
+
+  document.addEventListener("mousedown", (e) => {
+    if (pop.pinned && !pop.el.contains(e.target) &&
+        !(e.target.closest && e.target.closest("a.kjv-ref"))) hidePop(true);
+  });
+}
+
+function setRefsEnabled(on) {
+  state.refs.on = on;
+  els.refToggle.checked = on;
+  if (!on) hidePop(true);
+  saveSettings();
+  decorateAll();
+  if (on && !state.refs.indexed && state.pdf) buildRefIndex();
 }
 
 /* ================= event wiring ================= */
@@ -1018,6 +1335,8 @@ function wireUI() {
     }
   });
 
+  els.refToggle.addEventListener("change", () => setRefsEnabled(els.refToggle.checked));
+
   // search
   let searchTimer = 0;
   els.searchInput.addEventListener("input", () => {
@@ -1074,6 +1393,7 @@ function wireUI() {
   // keyboard
   window.addEventListener("keydown", (e) => {
     const inField = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+    if (e.key === "Escape" && pop.pinned) { hidePop(true); return; }
     if (e.ctrlKey && !e.altKey) {
       const k = e.key.toLowerCase();
       if (k === "o") { e.preventDefault(); els.fileInput.click(); return; }
@@ -1092,7 +1412,8 @@ function wireUI() {
       case "F3": e.preventDefault(); goToMatch(state.search.index + (e.shiftKey ? -1 : 1)); break;
       default: {
         const k = e.key.toLowerCase();
-        if (k === "w") setFitMode("fit-width");
+        if (k === "v") setRefsEnabled(!state.refs.on);
+        else if (k === "w") setFitMode("fit-width");
         else if (k === "p") setFitMode("fit-page");
         else if (k === "r") rotatePages();
         else if (k === "t") $("btnSidebar").click();
@@ -1122,6 +1443,7 @@ loadSettings();
 applyTheme();
 updateZoomLabel();
 wireUI();
+wireRefs();
 
 const bootUrl = new URLSearchParams(location.search).get("url");
 if (bootUrl && location.protocol !== "file:") openUrl(bootUrl);

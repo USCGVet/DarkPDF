@@ -26,6 +26,12 @@ jobs:
       # consume its base_path output, and its enablement:true mode cannot
       # create the Pages site on a fresh repo. Enable Pages once under
       # Settings -> Pages -> Source: GitHub Actions.
+      - name: Run tests
+        shell: pwsh
+        run: |
+          node test/test_refs.mjs
+          node test/test_passage.mjs
+
       - name: Build single-file reader
         shell: pwsh
         run: ./build.ps1
@@ -38,17 +44,28 @@ jobs:
           $len = (Get-Item $f).Length
           if ($len -lt 1MB) { throw "$f is only $len bytes - PDF.js probably was not inlined" }
           $html = [IO.File]::ReadAllText($f)
-          foreach ($needle in '__PDFJS_WORKER_B64__', '<style>', 'DarkPDF') {
+          foreach ($needle in '__PDFJS_WORKER_B64__', '__KJV_B64__', 'window.KJV', '<style>', 'DarkPDF') {
             if ($html -notmatch [regex]::Escape($needle)) { throw "built file is missing '$needle'" }
           }
           if ($html -match 'src="libs/') { throw "built file still references external libs/" }
+          if ($html -match 'src="kjv\.js"') { throw "built file still references external kjv.js" }
+          # The lazy loader still mentions libs/kjv.b64.js, but the inlined
+          # global short-circuits it, so assert the data is really present
+          # rather than that the filename is absent.
+          if ($html -notmatch 'window\.__KJV_B64__="[A-Za-z0-9+/]{100000,}') {
+            throw "the inlined KJV base64 is missing or truncated"
+          }
+          # The KJV blob alone is ~1.6 MB of base64; a file this small means
+          # it was dropped even though the marker check passed.
+          if ($len -lt 3MB) { throw "$f is only $len bytes - the KJV text is missing" }
           Write-Host ("ok - dist/DarkPDF.html is {0:N0} bytes" -f $len)
 
       - name: Assemble site
         shell: pwsh
         run: |
+          if (-not (Test-Path 'libs/kjv.b64.js')) { throw 'missing libs/kjv.b64.js - run tools/build_kjv.py' }
           New-Item -ItemType Directory -Force _site, _site/libs, _site/dist, _site/test | Out-Null
-          Copy-Item index.html, app.css, app.js, README.md, LICENSE _site/
+          Copy-Item index.html, app.css, app.js, kjv.js, README.md, LICENSE _site/
           Copy-Item libs/* _site/libs/
           Copy-Item dist/DarkPDF.html _site/dist/
           Copy-Item test/sample.pdf _site/test/

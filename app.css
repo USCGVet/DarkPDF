@@ -130,9 +130,9 @@ body {
   cursor: pointer;
 }
 
-#imgToggleWrap { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-#imgToggleWrap input { display: none; }
-#imgToggleWrap .switch {
+.tgl { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.tgl input { display: none; }
+.tgl .switch {
   width: 30px; height: 17px;
   border-radius: 17px;
   background: var(--border);
@@ -140,7 +140,7 @@ body {
   transition: background .15s;
   flex: none;
 }
-#imgToggleWrap .switch::after {
+.tgl .switch::after {
   content: "";
   position: absolute;
   top: 2px; left: 2px;
@@ -149,9 +149,9 @@ body {
   background: var(--text-dim);
   transition: left .15s, background .15s;
 }
-#imgToggleWrap input:checked + .switch { background: var(--accent-soft); }
-#imgToggleWrap input:checked + .switch::after { left: 15px; background: var(--accent); }
-#imgToggleWrap .lbl { color: var(--text-dim); }
+.tgl input:checked + .switch { background: var(--accent-soft); }
+.tgl input:checked + .switch::after { left: 15px; background: var(--accent); }
+.tgl .lbl { color: var(--text-dim); }
 
 /* ---------- progress ---------- */
 #progressBar { height: 2px; background: transparent; position: relative; z-index: 29; }
@@ -268,6 +268,84 @@ body {
   background: rgba(255, 140, 60, 0.55);
   box-shadow: 0 0 0 2px rgba(255, 150, 70, 0.75);
 }
+
+/* ---------- scripture references ----------
+   The text layer sits outside .canvasHolder, so nothing here is touched by
+   --page-filter: these colors render as authored, over the inverted page.
+   The span text itself stays transparent — the glyphs the reader sees are
+   the canvas underneath — so the affordance has to be a border, not a
+   color. A dotted rule reads as "there's more here" without competing
+   with the prose; the ~1000 references in a book like Heiser's would be
+   unbearable as highlights. */
+.textLayer a.kjv-ref {
+  color: transparent;
+  text-decoration: none;
+  /* em, not px: PDF.js sizes these spans per zoom level, so the rule keeps
+     its weight relative to the text instead of thinning to a hairline as
+     you zoom in. */
+  border-bottom: max(1px, 0.05em) dotted rgba(224, 164, 88, 0.85);
+  cursor: help;
+}
+/* Inferred from a preceding citation ("v. 14") rather than named outright.
+   Dashed, so a reader can tell at a glance which ones were resolved by
+   context and might therefore be wrong. */
+.textLayer a.kjv-ref.carried { border-bottom-style: dashed; }
+.textLayer a.kjv-ref:hover,
+.textLayer a.kjv-ref.open { background: rgba(224, 164, 88, 0.22); }
+
+/* ---------- verse popover ---------- */
+#versePop {
+  position: fixed;
+  z-index: 90;
+  /* --vp-font tracks the page zoom (see updatePopScale in app.js). Sizes in
+     here are em so the whole popover scales with it, and the measure stays
+     ~33 characters wide instead of turning into a narrow column of big text. */
+  font-size: var(--vp-font, 13.5px);
+  width: max-content;
+  max-width: min(33em, calc(100vw - 32px));
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  padding: 0.67em 0.89em 0.74em;
+  color: var(--text);
+  opacity: 0;
+  transition: opacity .12s;
+  pointer-events: none;
+}
+#versePop.on { opacity: 1; }
+#versePop.pinned { pointer-events: auto; }
+#versePop[hidden] { display: none; }
+
+.vp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  margin-bottom: 0.44em;
+  padding-bottom: 0.37em;
+  border-bottom: 1px solid var(--border);
+}
+.vp-ref { color: var(--accent); font-weight: 600; }
+.vp-src { color: var(--text-dim); font-size: 0.81em; margin-left: auto; letter-spacing: .04em; }
+
+.vp-body { max-height: 46vh; overflow-y: auto; }
+#versePop.pinned .vp-body { user-select: text; }
+.vp-v { margin: 0 0 0.37em; }
+.vp-v:last-child { margin-bottom: 0; }
+.vp-v .n {
+  color: var(--accent);
+  font-size: 0.78em;
+  vertical-align: super;
+  margin-right: 0.22em;
+  user-select: none;
+}
+.vp-note {
+  color: var(--text-dim);
+  font-size: 0.85em;
+  margin-top: 0.44em;
+  font-style: italic;
+}
+.vp-note:empty { display: none; }
 
 /* ---------- welcome ---------- */
 #welcome {

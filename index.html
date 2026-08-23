@@ -52,10 +52,15 @@
         <option value="paper">Original</option>
       </select>
       <input id="brightSlider" type="range" min="70" max="115" value="100" title="Page brightness">
-      <label id="imgToggleWrap" title="Keep photos in their original colors">
+      <label id="imgToggleWrap" class="tgl" title="Keep photos in their original colors">
         <input id="imgToggle" type="checkbox" checked>
         <span class="switch"></span>
         <span class="lbl">Photos</span>
+      </label>
+      <label id="refToggleWrap" class="tgl" title="Hover scripture references to read the passage (V)">
+        <input id="refToggle" type="checkbox" checked>
+        <span class="switch"></span>
+        <span class="lbl">Verses</span>
       </label>
     </div>
   </header>
@@ -87,6 +92,7 @@
             <span><kbd>←</kbd><kbd>→</kbd> pages</span>
             <span><kbd>W</kbd>/<kbd>P</kbd> fit</span>
             <span><kbd>T</kbd> thumbnails</span>
+            <span><kbd>V</kbd> verses</span>
           </div>
         </div>
       </div>
@@ -97,8 +103,19 @@
   <div id="dropOverlay"><div>Drop PDF to open</div></div>
   <div id="toast"></div>
 </div>
+
+<div id="versePop" hidden>
+  <div class="vp-head">
+    <span class="vp-ref"></span>
+    <span class="vp-src">KJV</span>
+  </div>
+  <div class="vp-body"></div>
+  <div class="vp-note"></div>
+</div>
+
 <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
 <!--__PDFJS__--><script src="libs/pdf.min.js"></script><!--__/PDFJS__-->
+<!--__KJVJS__--><script src="kjv.js"></script><!--__/KJVJS__-->
 <!--__INLINE_JS__--><script src="app.js"></script><!--__/INLINE_JS__-->
 </body>
 </html>

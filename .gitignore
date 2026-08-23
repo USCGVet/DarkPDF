@@ -16,3 +16,6 @@ scratch/
 
 # Note: dist/DarkPDF.html IS committed on purpose — it is the shipped
 # double-click deliverable. Regenerate it with build.ps1 after source edits.
+
+# KJV source download cache (regenerate with tools/build_kjv.py)
+tools/.kjv_source.json
